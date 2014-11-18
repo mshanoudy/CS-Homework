@@ -8,6 +8,10 @@ public class StatisticalTester
 {
     ArrayList<Double> numberList;
 
+    /**
+     * Constructor which accepts a file path
+     * @param filename The filename
+     */
     public StatisticalTester(String filename)
     {
         try
@@ -24,11 +28,40 @@ public class StatisticalTester
 
     }
 
+    /**
+     * Constructor which accepts an ArrayList of numbers
+     * @param numberList The list of random numbers
+     */
     public StatisticalTester(ArrayList<Double> numberList)
     {
         this.numberList = numberList;
     }
 
+    /**
+     * Runs all the tests
+     */
+    public void runTests()
+    {
+        System.out.println("Chi-Square Frequency Test");
+        chiSquareTest();
+        System.out.println("Kolmogorov-Smirnov Test");
+        kolmogorovSmirnovTest();
+        System.out.println("Runs Test");
+        runsTest();
+        System.out.println("Autocorrelations Test");
+        System.out.println("l = 2");
+        autocorrelationsTest(2);
+        System.out.println("l = 3");
+        autocorrelationsTest(3);
+        System.out.println("l = 5");
+        autocorrelationsTest(5);
+        System.out.println("l = 50");
+        autocorrelationsTest(50);
+    }
+
+    /**
+     * Chi-Square Frequency Test for sample size of 10,000 numbers at 80%, 90%, and 95% significance levels
+     */
     public void chiSquareTest()
     {
         ArrayList<ArrayList<Double>> freqList = new ArrayList<ArrayList<Double>>();
@@ -85,6 +118,9 @@ public class StatisticalTester
             System.out.println("Reject the null hypothesis at 95% significance level: C = " + C + ", x^2 = 16.919");
     }
 
+    /**
+     * Kolmogorov-Smirnov Test for sample size of first 100 numbers at 80%, 90%, and 95% significance levels
+     */
     public void kolmogorovSmirnovTest()
     {
         double[] D_plus  = new double[100];
@@ -124,6 +160,10 @@ public class StatisticalTester
             System.out.println("Reject the null hypothesis at 95% significance level: D = " + D + ", D_alpha = 0.136");
     }
 
+    /**
+     * Runs Test for sample size of 10,000 numbers. Currently returns just the Z-Score
+     * TODO: Check Z-Score in method
+     */
     public void runsTest()
     {
         // Find the observed mean
@@ -175,8 +215,27 @@ public class StatisticalTester
         System.out.println("Z score: " + Z);
     }
 
-    public void autocorrelationsTest()
+    /**
+     * Autocorrelations Test for sample size of 10,000 numbers. Currently returns just the Z-Score
+     * TODO: Check Z-Score in method
+     * @param l The gap (or 'lag') size
+     */
+    public void autocorrelationsTest(int l)
     {
+        int M;
+        int i = 100, N = 10000;
+        double pimHat, stdDev, Z, sum = 0;
 
+        // Solve for M, i + (M + 1)l <= N
+        M = ((N - (l + i)) / l);
+
+        // Find the Z score
+        for (int k = 0; k <= M; k++)
+            sum += numberList.get((i + (k * l)) % N) * numberList.get((i + ((k + 1) * l)) % N);
+        pimHat = ((1 / (M + 1)) * sum) - 0.25;
+        stdDev = Math.sqrt((13 * M) + 7) / (12 * (M + 1));
+        Z = pimHat / stdDev;
+
+        System.out.println("Z score: " + Z);
     }
 }
