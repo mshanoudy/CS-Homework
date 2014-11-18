@@ -1,0 +1,6 @@
+Compile:
+    javac -cp .:bcprov-jdk15on-150.jar CryptoTest.java
+Usage:
+    To start CryptoTest: java -cp .:bcprov-jdk15on-150.jar CryptoTest [message]
+    The program will accept a message to run the tests on from the command line.
+    If no message is passed, the program will run the extra credit test
