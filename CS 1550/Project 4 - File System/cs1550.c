@@ -15,9 +15,6 @@
 #include <errno.h>
 #include <fcntl.h>
 
-static const *DIRECTORIES_FILENAME = ".directories";
-static const *DISK_FILENAME = ".disk";
-
 #define	BLOCK_SIZE 512  // Size of a disk block
 #define	MAX_FILENAME 8  // Size of filename
 #define	MAX_EXTENSION 3 // Size of file extension
@@ -67,7 +64,7 @@ static int get_directory(cs1550_directory_entry *currentDir, int offset)
 {
     int res = -1;
     
-    FILE *file = fopen(DIRECTORIES_FILENAME, "rb");
+    FILE *file = fopen(".directories", "rb");
     if (file == NULL)
         return res; // Error opening file
     if (fseek(file, sizeof(cs1550_directory_entry) * offset, SEEK_SET) == -1)
@@ -104,7 +101,7 @@ static int get_directory_index(char *directory)
  * Splits the file path and sets the values to the passed variables
  * Returns number of variables filled on success, EOF on failure
  */
-static int split_path(char *path, char *directory, char *filename, char *extension)
+static int split_path(const char *path, char *directory, char *filename, char *extension)
 {
     return sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension);
 }
@@ -117,7 +114,7 @@ static int update_directories_list(cs1550_directory_entry *currentDir, int offse
 {
     int res = -1;
     
-    FILE *file = fopen(DIRECTORIES_FILENAME, "wb+");
+    FILE *file = fopen(".directories", "wb+");
     if (file == NULL)
         return res; // Error opening file
     if (fseek(file, sizeof(cs1550_directory_entry) * offset, SEEK_SET) == -1)
@@ -278,12 +275,12 @@ static int cs1550_mkdir(const char *path, mode_t mode)
         else
         {
             cs1550_directory_entry currentDir;
-            currentDir->dname  = filename;
-            currentDir->nFiles = 0;
+            strcpy(currentDir.dname, filename);
+            currentDir.nFiles = 0;
             
             // Add new directory to .directories file
-            FILE *file = fopen(DIRECTORIES_FILENAME, "a+");
-            fwrite(currentDir, sizeof(cs1550_directory_entry), 1, file);
+            FILE *file = fopen(".directories", "a+");
+            fwrite(&currentDir, sizeof(cs1550_directory_entry), 1, file);
             fclose(file);
         }
     }
