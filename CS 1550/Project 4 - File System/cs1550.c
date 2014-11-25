@@ -69,8 +69,8 @@ static int get_directory(cs1550_directory_entry *currentDir, int offset)
         return res; // Error opening file
     if (fseek(file, sizeof(cs1550_directory_entry) * offset, SEEK_SET) == -1)
         return res; // Error moving file pointer
-    if (fread(currentDir, sizeof(cs1550_directory_entry), 1, file) == 1)
-        res = 1;    // Successfully read from file
+    if (fread(currentDir, sizeof(cs1550_directory_entry), 1, file))
+        res = 0;    // Successfully read from file
     fclose(file);
     
     return res;
@@ -93,36 +93,6 @@ static int get_directory_index(char *directory)
             return index; // Match found
         index++;
     }
-    
-    return res;
-}
-
-/*
- * Splits the file path and sets the values to the passed variables
- * Returns number of variables filled on success, EOF on failure
- */
-static int split_path(const char *path, char *directory, char *filename, char *extension)
-{
-    return sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension);
-}
-
-/**
- * Updates the .directories file with a new directory
- * Returns 0 on success, -1 on failure
- */
-static int update_directories_list(cs1550_directory_entry *currentDir, int offset)
-{
-    int res = -1;
-    
-    FILE *file = fopen(".directories", "wb+");
-    if (file == NULL)
-        return res; // Error opening file
-    if (fseek(file, sizeof(cs1550_directory_entry) * offset, SEEK_SET) == -1)
-        return res; // Error moving file pointer
-    if (fwrite(currentDir, sizeof(cs1550_directory_entry), 1, file) == -1)
-        return res; // Error writing to file
-    fclose(file);
-    res = 0;
     
     return res;
 }
@@ -150,12 +120,13 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
     else
     {// Split the path and find index
         char directory[MAX_FILENAME + 1],filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
-        split_path(path, directory, filename, extension);
+        //split_path(path, directory, filename, extension);
+        sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension);
         int index = get_directory_index(directory); // Find the index
         
         if (index != -1)
         {// Valid directory path
-            if (sizeof(filename) == 1)
+            if (sizeof(filename) == 0)
             {// Subdirectory
                 stbuf->st_mode = S_IFDIR | 0755;
                 stbuf->st_nlink = 2;
@@ -225,7 +196,8 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     else
     {
         char directory[MAX_FILENAME + 1],filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
-        split_path(path, directory, filename, extension);
+        //split_path(path, directory, filename, extension);
+        sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension);
         int index = get_directory_index(directory); // Find the index
         
         // Valid index
@@ -263,23 +235,24 @@ static int cs1550_mkdir(const char *path, mode_t mode)
 	(void) mode; // Ignore mode
     
     char directory[MAX_FILENAME + 1],filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
-    split_path(path, directory, filename, extension);
+    
+    sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension);
 
-    if (strcmp(directory, "/") == 0)
+    if (1)
     {
-        int index = get_directory_index(filename); // Find the index
+        int index = get_directory_index(directory); // Find the index
         if (index != -1)
             res = -EEXIST;       // New directory already exists
-        else if (strlen(filename) > MAX_FILENAME)
+        else if (strlen(directory) > MAX_FILENAME)
             res = -ENAMETOOLONG; // New directory name is too long
         else
         {
             cs1550_directory_entry currentDir;
-            strcpy(currentDir.dname, filename);
+            strcpy(currentDir.dname, directory);
             currentDir.nFiles = 0;
             
             // Add new directory to .directories file
-            FILE *file = fopen(".directories", "a+");
+            FILE *file = fopen(".directories", "ab");
             fwrite(&currentDir, sizeof(cs1550_directory_entry), 1, file);
             fclose(file);
         }
