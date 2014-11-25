@@ -99,6 +99,15 @@ static int get_directory_index(char *directory)
     return res;
 }
 
+/*
+ * Splits the file path and sets the values to the passed variables
+ * Returns number of variables filled on success, EOF on failure
+ */
+static int split_path(char *path, char *directory, char *filename, char *extension)
+{
+    return sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension);
+}
+
 /* -------------------------------------------------------------------------- */
 
 /*
@@ -120,14 +129,13 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
 		stbuf->st_nlink = 2;
 	}
     else
-    {// Split the path
+    {// Split the path and find index
         char directory[MAX_FILENAME + 1],filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
-        sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension);
-        
+        split_path(path, directory, filename, extension);
         int index = get_directory_index(directory); // Find the index
         
         if (index != -1)
-        {// Valid path
+        {// Valid directory path
             if (sizeof(filename) == 1)
             {// Subdirectory
                 stbuf->st_mode = S_IFDIR | 0755;
@@ -166,29 +174,63 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
  * or could even be when a user hits TAB to do autocompletion
  */
 static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-			 off_t offset, struct fuse_file_info *fi)
+                          off_t offset, struct fuse_file_info *fi)
 {
-	// Since we're building with -Wall (all warnings reported) we need
+    int res = -ENOENT;
+    
+    cs1550_directory_entry currentDir;
+    
+    // Since we're building with -Wall (all warnings reported) we need
 	// to "use" every parameter, so let's just cast them to void to
 	// satisfy the compiler
 	(void) offset;
 	(void) fi;
-
-	// This line assumes we have no subdirectories, need to change
-	if (strcmp(path, "/") != 0)
-	return -ENOENT;
-
-	// The filler function allows us to add entries to the listing
-	// Read the fuse.h file for a description (in the ../include dir)
-	filler(buf, ".", NULL, 0);
-	filler(buf, "..", NULL, 0);
-
-	/*
-	// Add the user stuff (subdirs or files)
-	// The +1 skips the leading '/' on the filenames
-	filler(buf, newpath + 1, NULL, 0);
-	*/
-	return 0;
+    
+    // The root directory
+    if (strcmp(path, "/") == 0)
+    {
+        filler(buf, ".", NULL, 0);
+        filler(buf, "..", NULL, 0);
+        
+        // List any subdirectories
+        int x = 0;
+        while (get_directory(&currentDir, x) != -1)
+        {
+            filler(buf, currentDir.dname, NULL, 0);
+            x++;
+        }
+        
+        res = 0; // No error
+    }
+    // Not the root directory
+    else
+    {
+        char directory[MAX_FILENAME + 1],filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
+        split_path(path, directory, filename, extension);
+        int index = get_directory_index(directory); // Find the index
+        
+        // Valid index
+        if (index != -1)
+            if (get_directory(&currentDir, index) != -1)
+            {
+                filler(buf, ".", NULL, 0);
+                filler(buf, "..", NULL, 0);
+                
+                char filepath[MAX_FILENAME + MAX_EXTENSION + 2];
+                
+                // Add filesnames in this directory to buffer
+                int x;
+                for (x = 0; x < currentDir.nFiles; x++)
+                {
+                    sprintf(filepath, "%s.%s", currentDir.files[x].fname, currentDir.files[x].fext);
+                    filler(buf, filepath + 1, NULL, 0); // The +1 skips the leading '/' on the filenames
+                }
+                
+                res = 0; // No error
+            }
+    }
+    
+	return res;
 }
 
 /* 
