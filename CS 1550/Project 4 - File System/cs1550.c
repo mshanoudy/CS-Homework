@@ -15,6 +15,8 @@
 #include <errno.h>
 #include <fcntl.h>
 
+static const *DIRECTORIES_FILENAME = ".directories";
+
 #define	BLOCK_SIZE 512  // Size of a disk block
 #define	MAX_FILENAME 8  // Size of filename
 #define	MAX_EXTENSION 3 // Size of file extension
@@ -54,6 +56,51 @@ struct cs1550_disk_block
 
 typedef struct cs1550_disk_block cs1550_disk_block;
 
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Gets the directory at the specified index
+ * Returns 0 on success, -1 on failure
+ */
+static int get_directory(cs1550_directory_entry *currentDir, int offset)
+{
+    int res = -1;
+    
+    FILE *file = fopen(DIRECTORIES_FILENAME, "rb");
+    if (file == NULL)
+        return res; // Error opening file
+    if (fseek(file, sizeof(cs1550_directory_entry) * offset, SEEK_SET) == -1)
+        return res; // Error moving file pointer
+    if (fread(currentDir, sizeof(cs1550_directory_entry), 1, file) == 1)
+        res = 1;    // Successfully read from file
+    fclose(file);
+    
+    return res;
+}
+
+/*
+ * Gets the index of a specified directory
+ * Returns the index on success, -1 on failure
+ */
+static int get_directory_index(char *directory)
+{
+    int res = -1;
+    
+    cs1550_directory_entry currentDir;
+    int index = 0;
+    
+    while (get_directory(&currentDir, index) != -1)
+    {// Go through the directories list looking for the directory
+        if (strcmp(directory, currentDir.dname) == 0)
+            return index; // Match found
+        index++;
+    }
+    
+    return res;
+}
+
+/* -------------------------------------------------------------------------- */
+
 /*
  * Called whenever the system wants to know the file attributes, including
  * simply whether the file exists or not. 
@@ -73,28 +120,44 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
 		stbuf->st_nlink = 2;
 	}
     else
-    {
-        char *s = strrchr(path, '.'); // Check for file extension
+    {// Split the path
+        char directory[MAX_FILENAME + 1],filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
+        sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension);
         
-        // Check if name is subdirectory
-        if (s == NULL)
-        {
-            stbuf->st_mode = S_IFDIR | 0755;
-            stbuf->st_nlink = 2;
-            res = 0; // No error
-        }
-        // Check if name is a regular file
-        else if ()
-        {
-            stbuf->st_mode = S_IFREG | 0666;
-            stbuf->st_nlink = 1; // File links
-            stbuf->st_size = 0;  // File size - make sure you replace with real size!
-            res = 0; // No error
-        }
-        // Else return that path doesn't exist
+        int index = get_directory_index(directory); // Find the index
+        
+        if (index != -1)
+        {// Valid path
+            if (sizeof(filename) == 1)
+            {// Subdirectory
+                stbuf->st_mode = S_IFDIR | 0755;
+                stbuf->st_nlink = 2;
+                res = 0; // No error
+            }
+            else
+            {// File
+                // Get directory info
+                cs1550_directory_entry currentDir;
+                if (get_directory(&currentDir, index) == -1)
+                    return -ENOENT; // Error getting directory info
+                
+                // Find the file
+                int x;
+                for (x = 0; x < currentDir.nFiles; x++)
+                    if (strcmp(currentDir.files[x].fname, filename) == 0 &&
+                        strcmp(currentDir.files[x].fext, extension) == 0)
+                    {
+                        stbuf->st_mode = S_IFREG | 0666;
+                        stbuf->st_nlink = 1; // File links
+                        stbuf->st_size = currentDir.files[x].fsize;
+                        res = 0; // No error
+                    }
+            }
+        }// Invalid path
         else
             res = -ENOENT;
 	}
+    
 	return res;
 }
 
