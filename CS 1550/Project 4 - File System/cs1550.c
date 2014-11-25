@@ -16,6 +16,7 @@
 #include <fcntl.h>
 
 static const *DIRECTORIES_FILENAME = ".directories";
+static const *DISK_FILENAME = ".disk";
 
 #define	BLOCK_SIZE 512  // Size of a disk block
 #define	MAX_FILENAME 8  // Size of filename
@@ -106,6 +107,27 @@ static int get_directory_index(char *directory)
 static int split_path(char *path, char *directory, char *filename, char *extension)
 {
     return sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension);
+}
+
+/**
+ * Updates the .directories file with a new directory
+ * Returns 0 on success, -1 on failure
+ */
+static int update_directories_list(cs1550_directory_entry *currentDir, int offset)
+{
+    int res = -1;
+    
+    FILE *file = fopen(DIRECTORIES_FILENAME, "wb+");
+    if (file == NULL)
+        return res; // Error opening file
+    if (fseek(file, sizeof(cs1550_directory_entry) * offset, SEEK_SET) == -1)
+        return res; // Error moving file pointer
+    if (fwrite(currentDir, sizeof(cs1550_directory_entry), 1, file) == -1)
+        return res; // Error writing to file
+    fclose(file);
+    res = 0;
+    
+    return res;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -239,10 +261,36 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
  */
 static int cs1550_mkdir(const char *path, mode_t mode)
 {
-	(void) path;
-	(void) mode;
+    int res = 0;
+    
+	(void) mode; // Ignore mode
+    
+    char directory[MAX_FILENAME + 1],filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
+    split_path(path, directory, filename, extension);
 
-	return 0;
+    if (strcmp(directory, "/") == 0)
+    {
+        int index = get_directory_index(filename); // Find the index
+        if (index != -1)
+            res = -EEXIST;       // New directory already exists
+        else if (strlen(filename) > MAX_FILENAME)
+            res = -ENAMETOOLONG; // New directory name is too long
+        else
+        {
+            cs1550_directory_entry currentDir;
+            currentDir->dname  = filename;
+            currentDir->nFiles = 0;
+            
+            // Add new directory to .directories file
+            FILE *file = fopen(DIRECTORIES_FILENAME, "a+");
+            fwrite(currentDir, sizeof(cs1550_directory_entry), 1, file);
+            fclose(file);
+        }
+    }
+    else
+        res = -EPERM; // New directory not under root dir only
+    
+	return res;
 }
 
 /* 
