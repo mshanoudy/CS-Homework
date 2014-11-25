@@ -37,7 +37,7 @@ struct cs1550_directory_entry
 
 	struct cs1550_file_directory
 	{
-		char fname[MAX_FILENAME + 1];	// Filename (plus space for nul)
+		char fname[MAX_FILENAME + 1];   // Filename (plus space for nul)
 		char fext[MAX_EXTENSION + 1];	// Extension (plus space for nul)
 		size_t fsize;			        // File size
 		long nStartBlock;               // Where the first block is on disk
@@ -74,26 +74,26 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
 	}
     else
     {
-
-	// Check if name is subdirectory
-	/* 
-		// Might want to return a structure with these fields
-		stbuf->st_mode = S_IFDIR | 0755;
-		stbuf->st_nlink = 2;
-		res = 0; //no error
-	*/
-
-	// Check if name is a regular file
-	/*
-		// Regular file, probably want to be read and write
-		stbuf->st_mode = S_IFREG | 0666; 
-		stbuf->st_nlink = 1; //file links
-		stbuf->st_size = 0; //file size - make sure you replace with real size!
-		res = 0; // no error
-	*/
-
-		// Else return that path doesn't exist
-		res = -ENOENT;
+        char *s = strrchr(path, '.'); // Check for file extension
+        
+        // Check if name is subdirectory
+        if (s == NULL)
+        {
+            stbuf->st_mode = S_IFDIR | 0755;
+            stbuf->st_nlink = 2;
+            res = 0; // No error
+        }
+        // Check if name is a regular file
+        else if ()
+        {
+            stbuf->st_mode = S_IFREG | 0666;
+            stbuf->st_nlink = 1; // File links
+            stbuf->st_size = 0;  // File size - make sure you replace with real size!
+            res = 0; // No error
+        }
+        // Else return that path doesn't exist
+        else
+            res = -ENOENT;
 	}
 	return res;
 }
