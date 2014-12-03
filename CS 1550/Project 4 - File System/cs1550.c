@@ -59,7 +59,7 @@ typedef struct cs1550_disk_block cs1550_disk_block;
 
 
 /*
-* Sets the passed directory entry and returns the index
+* Sets the passed directory entry and returns the index of the directory on success
 */
 static int get_directory(char *directory, cs1550_directory_entry *thisDirectory)
 {
@@ -86,6 +86,9 @@ static int get_directory(char *directory, cs1550_directory_entry *thisDirectory)
 	return -1;
 }
 
+/*
+* Sets the passed directory entry and returns the index of the file on success
+*/
 static int get_file(char *directory, char *filename, char *extension, cs1550_directory_entry *thisDirectory)
 {
 	cs1550_directory_entry currentDirectory;
@@ -113,6 +116,11 @@ static int get_file(char *directory, char *filename, char *extension, cs1550_dir
 	fclose(file);
 
 	return -1;
+}
+
+static int create_block()
+{
+
 }
 
 /*--------------------------------------------------------------------------------*/
@@ -245,7 +253,7 @@ static int cs1550_mkdir(const char *path, mode_t mode)
 
 	if (strlen(directory) > MAX_FILENAME)
 		return -ENAMETOOLONG;
-	if (strlen(filename) > 3)
+	if (filename != NULL)
 		return -EPERM;
 	if (get_directory(directory, &currentDirectory) != -1)
 		return -EEXIST;
@@ -280,7 +288,37 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
 {
 	(void) mode;
 	(void) dev;
-	(void) path;
+
+	cs1550_directory_entry currentDirectory;
+	memset(&currentDirectory, 0, sizeof(cs1550_directory_entry));
+
+	char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
+	sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension); 
+
+	if (strlen(filename) > MAX_FILENAME || strlen(extension) > MAX_EXTENSION)
+		return -ENAMETOOLONG;
+	if (directory == NULL)
+		return -EPERM;
+	if (get_file(directory, filename, extension, &currentDirectory) != -1)
+		return -EEXIST;
+
+	// Get the directory
+	// Update directory entry info
+	// Update .directories file
+
+	int directoryIndex = get_directory(directory, &currentDirectory);
+	int fileIndex = currentDirectory.nFiles - 1;
+	if (fileIndex == -1) 
+		fileIndex = 0;
+
+	currentDirectory.nFiles = currentDirectory.nFiles + 1;
+	currentDirectory.files[fileIndex].fname = filename;
+	currentDirectory.files[fileIndex].fext = extension;
+	currentDirectory.files[fileIndex].fsize = 0;
+	currentDirectory.files[fileIndex].nStartBlock = create_block(); // Need to account for error handling
+
+	// Update .directories here
+
 	return 0;
 }
 
