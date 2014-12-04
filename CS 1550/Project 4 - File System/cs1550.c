@@ -129,6 +129,8 @@ static int create_block()
 	int index = 0;
 	int bookKeeper = 0;
 
+	perror("create_block called");
+
 	FILE *file = fopen(".disk", "rb+");	
 	if (file == NULL) 
 		return -1;
@@ -160,7 +162,7 @@ static int create_block()
 
 static int write_directory(cs1550_directory_entry *currentDirectory, int index)
 {
-	FILE *file = fopen(".disk", "wb+");	
+	FILE *file = fopen(".disk", "rb+");	
 	if (file == NULL) 
 		return -1;	
 
@@ -173,7 +175,7 @@ static int write_directory(cs1550_directory_entry *currentDirectory, int index)
 
 static int write_block(cs1550_disk_block *block, int index)
 {
-	FILE *file = fopen(".disk", "wb+");	
+	FILE *file = fopen(".disk", "rb+");	
 	if (file == NULL) 
 		return -1;	
 
@@ -350,6 +352,8 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
 	(void) mode;
 	(void) dev;
 
+	perror("cs1550_mknod called!");
+
 	cs1550_directory_entry currentDirectory;
 	memset(&currentDirectory, 0, sizeof(cs1550_directory_entry));
 
@@ -371,8 +375,8 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
 	
 	// Update directory entry info
 	currentDirectory.nFiles = currentDirectory.nFiles + 1;
-	currentDirectory.files[fileIndex].fname = filename;
-	currentDirectory.files[fileIndex].fext = extension;
+	strcpy(currentDirectory.files[fileIndex].fname, filename);
+	strcpy(currentDirectory.files[fileIndex].fext, extension);
 	currentDirectory.files[fileIndex].fsize = 0;
 	currentDirectory.files[fileIndex].nStartBlock = create_block(); // TODO: Need to account for error handling if full
 
@@ -424,6 +428,8 @@ static int cs1550_write(const char *path, const char *buf, size_t size,
 {
 	(void) fi;
 
+	perror("cs1550_write called!");
+
 	cs1550_directory_entry currentDirectory;
 	memset(&currentDirectory, 0, sizeof(cs1550_directory_entry));
 	cs1550_disk_block currentBlock;
@@ -446,7 +452,7 @@ static int cs1550_write(const char *path, const char *buf, size_t size,
 		return -EFBIG;
 
 	// Write data
-	currentBlock.data = *buf;
+	strcpy(currentBlock.data, buf);
 	write_block(&currentBlock, currentDirectory.files[fileIndex].nStartBlock);
 
 	// Set size (should be same as input) and return, or error
