@@ -158,7 +158,7 @@ static int create_block()
 	return -1;
 }
 
-static int write_directory(*cs1550_directory_entry currentDirectory, int index)
+static int write_directory(cs1550_directory_entry *currentDirectory, int index)
 {
 	FILE *file = fopen(".disk", "wb+");	
 	if (file == NULL) 
@@ -166,6 +166,19 @@ static int write_directory(*cs1550_directory_entry currentDirectory, int index)
 
 	fseek(file, index * sizeof(cs1550_directory_entry), SEEK_SET);
 	fwrite(currentDirectory, sizeof(cs1550_directory_entry), 1, file); // Needs error handling
+	fclose(file);
+
+	return 0;
+}
+
+static int write_block(cs1550_disk_block *block, int index)
+{
+	FILE *file = fopen(".disk", "wb+");	
+	if (file == NULL) 
+		return -1;	
+
+	fseek(file, (index * sizeof(cs1550_disk_block)) + sizeof(int), SEEK_SET);
+	fwrite(block, sizeof(cs1550_disk_block) - sizeof(int), 1, file); // Needs error handling
 	fclose(file);
 
 	return 0;
@@ -384,7 +397,7 @@ static int cs1550_unlink(const char *path)
  *
  */
 static int cs1550_read(const char *path, char *buf, size_t size, off_t offset,
-			  struct fuse_file_info *fi)
+			  		   struct fuse_file_info *fi)
 {
 	(void) buf;
 	(void) offset;
@@ -407,18 +420,38 @@ static int cs1550_read(const char *path, char *buf, size_t size, off_t offset,
  *
  */
 static int cs1550_write(const char *path, const char *buf, size_t size, 
-			  off_t offset, struct fuse_file_info *fi)
+			  			off_t offset, struct fuse_file_info *fi)
 {
-	(void) buf;
-	(void) offset;
 	(void) fi;
-	(void) path;
 
-	//check to make sure path exists
-	//check that size is > 0
-	//check that offset is <= to the file size
-	//write data
-	//set size (should be same as input) and return, or error
+	cs1550_directory_entry currentDirectory;
+	memset(&currentDirectory, 0, sizeof(cs1550_directory_entry));
+	cs1550_disk_block currentBlock;
+	memset(&currentBlock, 0, sizeof(cs1550_disk_block));
+
+	char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
+	sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension); 
+
+	int fileIndex      = get_file(directory, filename, extension, &currentDirectory);
+	int directoryIndex = get_directory(directory, &currentDirectory);
+
+	// Check to make sure path exists
+	if (fileIndex == -1)
+		return -EBADF;
+	// Check that size is > 0
+	if (size <= 0)
+		return -1;
+	// Check that offset is <= to the file size
+	if (offset > size || size > MAX_DATA_IN_BLOCK)
+		return -EFBIG;
+
+	// Write data
+	currentBlock.data = *buf;
+	write_block(&currentBlock, currentDirectory.files[fileIndex].nStartBlock);
+
+	// Set size (should be same as input) and return, or error
+	currentDirectory.files[fileIndex].fsize = size;
+	write_directory(&currentDirectory, directoryIndex);
 
 	return size;
 }
