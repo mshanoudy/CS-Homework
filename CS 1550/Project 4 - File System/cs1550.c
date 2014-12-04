@@ -49,7 +49,7 @@ typedef struct cs1550_directory_entry cs1550_directory_entry;
 
 struct cs1550_disk_block
 {
-	//And all of the space in the block can be used for actual data storage.
+	// And all of the space in the block can be used for actual data storage.
 	char data[MAX_DATA_IN_BLOCK];
 };
 
@@ -77,6 +77,7 @@ static int get_directory(char *directory, cs1550_directory_entry *thisDirectory)
 		if (strcmp(currentDirectory.dname, directory) == 0)
 		{
 			*thisDirectory = currentDirectory;
+			fclose(file);
 			return index;	
 		}
 		index++;
@@ -110,6 +111,7 @@ static int get_file(char *directory, char *filename, char *extension, cs1550_dir
 						strcmp(currentDirectory.files[index].fext, extension) == 0)
 					{
 						*thisDirectory = currentDirectory;
+						fclose(file);
 						return index;
 					}
 			}
@@ -118,9 +120,55 @@ static int get_file(char *directory, char *filename, char *extension, cs1550_dir
 	return -1;
 }
 
+/*
+* Finds first free block and allocates it, returns that block's position
+* TODO: As of now, each file will take up an entire block. This needs to be changed
+*/
 static int create_block()
 {
+	int index = 0;
+	int bookKeeper = 0;
 
+	FILE *file = fopen(".disk", "rb+");	
+	if (file == NULL) 
+		return -1;
+
+	while (fread(&bookKeeper, sizeof(int), 1, file) == 1)
+	{
+		// Found an empty block
+		if (bookKeeper == 0)
+		{
+			bookKeeper = 1;
+			fwrite(&bookKeeper, sizeof(int), 1, file);
+			fclose(file);
+			return index;
+		}
+
+		fseek(file, -sizeof(int), SEEK_CUR); 			  
+		if (fseek(file, sizeof(cs1550_disk_block), SEEK_CUR) != 0)
+		{// Failed to seek to next block
+			fclose(file);
+			return -1;
+		}
+
+		index++;
+	}
+	fclose(file);
+
+	return -1;
+}
+
+static int write_directory(*cs1550_directory_entry currentDirectory, int index)
+{
+	FILE *file = fopen(".disk", "wb+");	
+	if (file == NULL) 
+		return -1;	
+
+	fseek(file, index * sizeof(cs1550_directory_entry), SEEK_SET);
+	fwrite(currentDirectory, sizeof(cs1550_directory_entry), 1, file); // Needs error handling
+	fclose(file);
+
+	return 0;
 }
 
 /*--------------------------------------------------------------------------------*/
@@ -303,21 +351,20 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
 		return -EEXIST;
 
 	// Get the directory
-	// Update directory entry info
-	// Update .directories file
-
 	int directoryIndex = get_directory(directory, &currentDirectory);
 	int fileIndex = currentDirectory.nFiles - 1;
 	if (fileIndex == -1) 
 		fileIndex = 0;
-
+	
+	// Update directory entry info
 	currentDirectory.nFiles = currentDirectory.nFiles + 1;
 	currentDirectory.files[fileIndex].fname = filename;
 	currentDirectory.files[fileIndex].fext = extension;
 	currentDirectory.files[fileIndex].fsize = 0;
-	currentDirectory.files[fileIndex].nStartBlock = create_block(); // Need to account for error handling
+	currentDirectory.files[fileIndex].nStartBlock = create_block(); // TODO: Need to account for error handling if full
 
-	// Update .directories here
+	// Update .directories
+	write_directory(&currentDirectory, directoryIndex);
 
 	return 0;
 }
