@@ -48,8 +48,7 @@ struct cs1550_directory_entry
 typedef struct cs1550_directory_entry cs1550_directory_entry;
 
 struct cs1550_disk_block
-{
-	// And all of the space in the block can be used for actual data storage.
+{// And all of the space in the block can be used for actual data storage.
 	char data[MAX_DATA_IN_BLOCK];
 };
 
@@ -68,7 +67,10 @@ static int get_directory(char *directory, cs1550_directory_entry *thisDirectory)
 
 	FILE *file = fopen(".directories", "ab+");
 	if (file == NULL) 
+	{
+		perror("** fopen failed in get_directory **");
 		return -1;
+	}
 
 	int index = 0;
 	while (fread(&currentDirectory, sizeof(cs1550_directory_entry), 1, file) == 1)
@@ -96,29 +98,30 @@ static int get_file(char *directory, char *filename, char *extension, cs1550_dir
 	memset(&currentDirectory, 0, sizeof(cs1550_directory_entry));
 
 	FILE *file = fopen(".directories", "ab+");
-	if (file == NULL) 
+	if (file == NULL)
+	{
+		perror("** fopen failed in get **");
 		return -1;
+	}
 
 	while (fread(&currentDirectory, sizeof(cs1550_directory_entry), 1, file) == 1)
 		// Is this the directory?
 		if (strcmp(currentDirectory.dname, directory) == 0)
-			// Is this directory empty?
-			if (currentDirectory.nFiles > 0)
-			{
-				int index;
-				for (index = 0; index < currentDirectory.nFiles; index++)
-					if (strcmp(currentDirectory.files[index].fname, filename) == 0 &&
-						strcmp(currentDirectory.files[index].fext, extension) == 0)
-					{
-						*thisDirectory = currentDirectory;
-						fclose(file);
-						return index;
-					}
-			}
+		{
+			int index;
+			for (index = 0; index < currentDirectory.nFiles; index++)
+				if (strcmp(currentDirectory.files[index].fname, filename) == 0 &&
+					strcmp(currentDirectory.files[index].fext, extension) == 0)
+				{
+					*thisDirectory = currentDirectory;
+					fclose(file);
+					return index;
+				}
+		}
 	fclose(file);
 
 	return -1;
-}
+} 
 
 /*
 * Finds first free block and allocates it, returns that block's position
@@ -129,11 +132,12 @@ static int create_block()
 	int index = 0;
 	int bookKeeper = 0;
 
-	perror("create_block called");
-
 	FILE *file = fopen(".disk", "rb+");	
 	if (file == NULL) 
+	{
+		perror("** fopen failed in create_block ***");
 		return -1;
+	}
 
 	while (fread(&bookKeeper, sizeof(int), 1, file) == 1)
 	{
@@ -146,9 +150,16 @@ static int create_block()
 			return index;
 		}
 
-		fseek(file, -sizeof(int), SEEK_CUR); 			  
+		if (fseek(file, -sizeof(int), SEEK_CUR) != 0)
+		{
+			perror("** first fseek failed in create_block **");
+			fclose(file);
+			return -1;
+		}
+
 		if (fseek(file, sizeof(cs1550_disk_block), SEEK_CUR) != 0)
 		{// Failed to seek to next block
+			perror("** second fseek failed in create_block **");
 			fclose(file);
 			return -1;
 		}
@@ -164,10 +175,25 @@ static int write_directory(cs1550_directory_entry *currentDirectory, int index)
 {
 	FILE *file = fopen(".disk", "rb+");	
 	if (file == NULL) 
-		return -1;	
+	{
+		perror("** fopen failed in write_directory **");
+		return -1;
+	}
 
-	fseek(file, index * sizeof(cs1550_directory_entry), SEEK_SET);
-	fwrite(currentDirectory, sizeof(cs1550_directory_entry), 1, file); // Needs error handling
+	if (fseek(file, index * sizeof(cs1550_directory_entry), SEEK_SET) != 0)
+	{
+		perror("** fseek failed in write_directory **");
+		fclose(file);
+		return -1;
+	}
+
+	if (fwrite(currentDirectory, sizeof(cs1550_directory_entry), 1, file) != 1)
+	{
+		perror("** fwrite failed in write_directory **");
+		fclose(file);
+		return -1;
+	}
+	
 	fclose(file);
 
 	return 0;
@@ -176,11 +202,26 @@ static int write_directory(cs1550_directory_entry *currentDirectory, int index)
 static int write_block(cs1550_disk_block *block, int index)
 {
 	FILE *file = fopen(".disk", "rb+");	
-	if (file == NULL) 
-		return -1;	
+	if (file == NULL)
+	{
+		perror("** fopen failed in write_block **");
+		return -1;
+	}
 
-	fseek(file, (index * sizeof(cs1550_disk_block)) + sizeof(int), SEEK_SET);
-	fwrite(block, sizeof(cs1550_disk_block) - sizeof(int), 1, file); // Needs error handling
+	if (fseek(file, (index * sizeof(cs1550_disk_block)) + sizeof(int), SEEK_SET) != 0)
+	{
+		perror("** fseek failed in write_block **");
+		fclose(file);
+		return -1;
+	}
+
+	if (fwrite(block, sizeof(cs1550_disk_block) - sizeof(int), 1, file) != 1)
+	{
+		perror("** fwrite failed in write_block **");
+		fclose(file);
+		return -1;
+	}
+
 	fclose(file);
 
 	return 0;
@@ -210,28 +251,36 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
 		memset(&currentDirectory, 0, sizeof(cs1550_directory_entry));
 
 		char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
-		sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension); 
+		int  pathResult = sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension); 
 
 		// Is this a valid directory?
 		if (get_directory(directory, &currentDirectory) != -1)
 		{
-			// Is there something in this directory?
-			if (currentDirectory.nFiles > 0)
+			// Did sscanf fail? Directory
+			if (pathResult < 3)
+			{
+				stbuf->st_mode = S_IFDIR | 0755;
+				stbuf->st_nlink = 2;
+				stbuf->st_size = BLOCK_SIZE;	
+			}
+			else
 			{
 				int index = get_file(directory, filename, extension, &currentDirectory);
+				
 				// Is this a valid file?
 				if (index != -1)
 				{
 					stbuf->st_mode = S_IFREG | 0666; 
-					stbuf->st_nlink = 1; 	// file links
+					stbuf->st_nlink = 1; 	
 					stbuf->st_size = currentDirectory.files[index].fsize;
+				}	
+				// Is a new file?
+				else
+				{
+					stbuf->st_mode = S_IFREG | 0666; 
+					stbuf->st_nlink = 1; 	
+					stbuf->st_size = 0;
 				}
-			}
-			else
-			{
-				stbuf->st_mode = S_IFDIR | 0755;
-				stbuf->st_nlink = 2;
-				stbuf->st_size = BLOCK_SIZE;
 			}
 		}
 		else
@@ -253,8 +302,6 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	//satisfy the compiler
 	(void) offset;
 	(void) fi;
-
-	perror("readdir called!");
 
 	cs1550_directory_entry currentDirectory;
 	memset(&currentDirectory, 0, sizeof(cs1550_directory_entry));
@@ -312,11 +359,11 @@ static int cs1550_mkdir(const char *path, mode_t mode)
 	memset(&currentDirectory, 0, sizeof(cs1550_directory_entry));
 
 	char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
-	sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension); 
+	int  pathResult = sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension); 
 
 	if (strlen(directory) > MAX_FILENAME)
 		return -ENAMETOOLONG;
-	if (filename != NULL)
+	if (pathResult > 1)
 		return -EPERM;
 	if (get_directory(directory, &currentDirectory) != -1)
 		return -EEXIST;
@@ -352,29 +399,27 @@ static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
 	(void) mode;
 	(void) dev;
 
-	perror("cs1550_mknod called!");
-
 	cs1550_directory_entry currentDirectory;
 	memset(&currentDirectory, 0, sizeof(cs1550_directory_entry));
 
 	char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
-	sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension); 
+	int  pathResult = sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension); 
 
 	if (strlen(filename) > MAX_FILENAME || strlen(extension) > MAX_EXTENSION)
 		return -ENAMETOOLONG;
-	if (directory == NULL)
+	if (strcmp(path, "/") == 0)
 		return -EPERM;
 	if (get_file(directory, filename, extension, &currentDirectory) != -1)
 		return -EEXIST;
 
 	// Get the directory
 	int directoryIndex = get_directory(directory, &currentDirectory);
-	int fileIndex = currentDirectory.nFiles - 1;
-	if (fileIndex == -1) 
-		fileIndex = 0;
+	int fileIndex = currentDirectory.nFiles;
+	if (fileIndex > MAX_FILES_IN_DIR) 
+		return -1;
 	
 	// Update directory entry info
-	currentDirectory.nFiles = currentDirectory.nFiles + 1;
+	currentDirectory.nFiles = fileIndex + 1;
 	strcpy(currentDirectory.files[fileIndex].fname, filename);
 	strcpy(currentDirectory.files[fileIndex].fext, extension);
 	currentDirectory.files[fileIndex].fsize = 0;
@@ -428,12 +473,10 @@ static int cs1550_write(const char *path, const char *buf, size_t size,
 {
 	(void) fi;
 
-	perror("cs1550_write called!");
-
-	cs1550_directory_entry currentDirectory;
-	memset(&currentDirectory, 0, sizeof(cs1550_directory_entry));
 	cs1550_disk_block currentBlock;
+	cs1550_directory_entry currentDirectory;
 	memset(&currentBlock, 0, sizeof(cs1550_disk_block));
+	memset(&currentDirectory, 0, sizeof(cs1550_directory_entry));
 
 	char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
 	sscanf(path, "/%[^/]/%[^.].%s", directory, filename, extension); 
@@ -442,17 +485,26 @@ static int cs1550_write(const char *path, const char *buf, size_t size,
 	int directoryIndex = get_directory(directory, &currentDirectory);
 
 	// Check to make sure path exists
-	if (fileIndex == -1)
+	if (directoryIndex == -1)
 		return -EBADF;
 	// Check that size is > 0
 	if (size <= 0)
 		return -1;
 	// Check that offset is <= to the file size
-	if (offset > size || size > MAX_DATA_IN_BLOCK)
+	if (offset > size)
 		return -EFBIG;
-
+	
 	// Write data
 	strcpy(currentBlock.data, buf);
+
+	if (fileIndex == -1)
+	{// New file
+		cs1550_mknod(path, S_IFDIR, 0);
+		perror("** cs1550_mknod called from inside cs1550_write **");
+		fileIndex = get_file(directory, filename, extension, &currentDirectory);
+	}
+	
+	//write_block(&currentBlock, 0);
 	write_block(&currentBlock, currentDirectory.files[fileIndex].nStartBlock);
 
 	// Set size (should be same as input) and return, or error
