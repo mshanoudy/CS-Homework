@@ -108,8 +108,8 @@ static int get_file_index(char *filename, char *extension, cs1550_directory_entr
 	int fileIndex;
 
 	for (fileIndex = 0; fileIndex < MAX_FILES_IN_DIR; fileIndex++)
-		if (strcmp(currentDirectory.files[index].fname, filename) == 0 &&
-			strcmp(currentDirectory.files[index].fext, extension) == 0))
+		if (strcmp(currentDirectory.files[fileIndex].fname, filename) == 0 &&
+			strcmp(currentDirectory.files[fileIndex].fext, extension) == 0)
 				return fileIndex;
 
 	return -1;	
@@ -125,6 +125,8 @@ static int get_file_index(char *filename, char *extension, cs1550_directory_entr
  */
 static int cs1550_getattr(const char *path, struct stat *stbuf)
 {
+	perror("** cs1550_getattr called **");
+
 	char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
 	int  pathElements = split_path(path, directory, filename, extension);
 	int  res = 0;
@@ -169,6 +171,11 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
 				// New file
 				else
 				{
+					perror("** New file condition in cs1550_getattr **");
+					stbuf->st_mode  = S_IFREG | 0666; 
+					stbuf->st_nlink = 1; 	
+					stbuf->st_size  = 1;
+					res = 0;
 					// TODO: Handle this if need be
 				}
 			}
@@ -186,6 +193,8 @@ static int cs1550_getattr(const char *path, struct stat *stbuf)
  */
 static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
+	perror("** cs1550_readdir called **");
+
 	char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
 	int  pathElements = split_path(path, directory, filename, extension);
 	
@@ -221,13 +230,15 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler, o
 			filler(buf, ".", NULL, 0);
 			filler(buf, "..", NULL, 0);
 
+			perror("** Printing files in directory in cs1550_readdir **");
+
 			int fileIndex;
 			// List directory contents
-			for (fileIndex = 0; fileIndex < MAX_FILES_IN_DIR; fileIndex++)
+			for (fileIndex = 0; fileIndex < currentDirectory.nFiles; fileIndex++)
 			{
 				char fullFileName[MAX_FILENAME + MAX_EXTENSION + 4];
-				strcpy(fullFileName, filename);
-				strncat(fullFileName, extension, strnlen(extension));
+				strcpy(fullFileName, currentDirectory.files[fileIndex].fname);
+				strcat(fullFileName, currentDirectory.files[fileIndex].fext);
 
 				filler(buf, fullFileName + 1, NULL, 0);	// +1 skips the leading '/' on the filenames
 			}
@@ -254,7 +265,7 @@ static int cs1550_mkdir(const char *path, mode_t mode)
 	(void) mode; // Unused parameter
 
 	// Is this directory name too long?
-	if (strnlen(directory) > MAX_FILENAME)
+	if (strlen(directory) > MAX_FILENAME)
 		return -ENAMETOOLONG;
 	// Is path not under the root dir only?
 	if (pathElements > 1)
@@ -274,12 +285,12 @@ static int cs1550_mkdir(const char *path, mode_t mode)
 	if (file == NULL) 
 	{
 		perror("** fopen failed in cs1550_mkdir **");
-		return -1;
+		return -EIO;
 	}		
 	if (fwrite(&currentDirectory, sizeof(cs1550_directory_entry), 1, file) != 1)
 	{
 		perror("** fwrite failed in cs1550_mkdir **");
-		return -1;
+		return -EIO;
 	}
 	fclose(file);
 
@@ -301,28 +312,164 @@ static int cs1550_rmdir(const char *path)
  */
 static int cs1550_mknod(const char *path, mode_t mode, dev_t dev)
 {
+	char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
+	int  pathElements = split_path(path, directory, filename, extension);
+
+	cs1550_directory_entry currentDirectory;
+	int directoryIndex = get_directory(directory, &currentDirectory);
+
+	// Unused parameters
 	(void) mode;
 	(void) dev;
-	(void) path;
+
+	perror("** cs1550_mknod called **");
+
+	// Is the filename or extension too long?
+	if (strlen(filename) > MAX_FILENAME || strlen(extension) > MAX_EXTENSION)
+		return -ENAMETOOLONG;
+	// Is file being created in the root dir?
+	if (pathElements < 3)
+		return -EPERM;
+	// Does this file already exist?
+	if (get_file_index(filename, extension, currentDirectory) != -1)
+		return -EEXIST;
+
+	int fileIndex = currentDirectory.nFiles;	
+	
+	// Update the directory_entry fields
+	currentDirectory.nFiles = currentDirectory.nFiles + 1;
+	strcpy(currentDirectory.files[fileIndex].fname, filename);
+	strcpy(currentDirectory.files[fileIndex].fext, extension);
+	currentDirectory.files[fileIndex].fsize = 0;
+	currentDirectory.files[fileIndex].nStartBlock = 0;	// TODO: make this not 0
+
+	long int directoryOffset = directoryIndex * sizeof(cs1550_directory_entry);
+
+	// Write to .directories
+	FILE *file = fopen(".directories", "rb+");
+	if (file == NULL) 
+	{
+		perror("** fopen failed in cs1550_mknod **");
+		return -EIO;
+	}	
+	if (fseek(file, directoryOffset, SEEK_SET) != 0)
+	{
+		perror("** fseek failed in cs1550_mknod **");
+		return -EIO;
+	}
+	if (fwrite(&currentDirectory, sizeof(cs1550_directory_entry), 1, file) != 1)
+	{
+		perror("** fwrite failed in cs1550_mknod **");
+		return -EIO;
+	}
+	fclose(file);
+
 	return 0;
 }
 
-/*
- * Deletes a file
+/* 
+ * Write size bytes from buf into file starting from offset
+ *
  */
-static int cs1550_unlink(const char *path)
+static int cs1550_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-    (void) path;
+	char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
+	int  pathElements = split_path(path, directory, filename, extension);
 
-    return 0;
+	cs1550_directory_entry currentDirectory;
+	int directoryIndex = get_directory(directory, &currentDirectory);
+	int fileIndex 	   = get_file_index(filename, extension, currentDirectory);
+
+	(void) fi; // Unused parameter
+
+	// Is this a valid path?
+	if (directoryIndex == -1)
+	{
+		perror("** Invalid path in cs1550_write **");
+		return -1;
+	}
+	// Is the size > 0?
+	if (size <= 0)
+	{
+		perror("** Size not > 0 in cs1550_write **");
+		return -1;
+	}
+	// Is the offset <= size?
+	if (offset > size)
+	{
+		perror("** offset > size in cs1550_write **");
+		return -EFBIG;
+	}
+		
+	perror("** cs1550_write called **");
+	perror(buf);
+	
+	int directoryOffset = directoryIndex * sizeof(cs1550_directory_entry);
+	int fileOffset = 0;
+	//int fileOffset 		= (currentDirectory.files[fileIndex].nStartBlock * currentDirectory.files[fileIndex].fsize) + offset;
+
+	// Write to .disk
+	FILE *file = fopen(".disk", "rb+");
+	if (file == NULL)
+	{
+		perror("** fopen failed in cs1550_write **");
+		return -EIO;
+	}
+	if (fseek(file, fileOffset, SEEK_SET) != 0)
+	{
+		perror("** fseek failed in cs1550_write");
+		return -EIO;
+	}
+	if (fwrite(buf, size, 1, file) != 1)
+	{
+		perror("** fwrite failed in cs1550_write **");
+		return -EIO;
+	}
+	fclose(file);
+
+	fileIndex = currentDirectory.nFiles;
+	
+	perror("** wrote to .disk in cs1550_write **");
+	if (currentDirectory.nFiles >= 0)
+		perror("** nFiles is >= 0 in cs1550_write **");
+
+	// Set directory entry
+	
+	currentDirectory.nFiles = currentDirectory.nFiles + 1;
+	currentDirectory.files[0].fsize = size;
+	strcpy(currentDirectory.files[0].fname, filename);
+	strcpy(currentDirectory.files[0].fext, extension);
+	currentDirectory.files[0].nStartBlock = 0;
+
+	// Write to .directories 
+	FILE *f = fopen(".directories", "rb+");
+	if (file == NULL) 
+	{
+		perror("** fopen failed in cs1550_write **");
+		return -EIO;
+	}	
+	if (fseek(f, directoryOffset, SEEK_SET) != 0)
+	{
+		perror("** fseek failed in cs1550_write **");
+		return -EIO;
+	}
+	if (fwrite(&currentDirectory, sizeof(cs1550_directory_entry), 1, f) != 1)
+	{
+		perror("** fwrite failed in cs1550_write **");
+		return -EIO;
+	}
+	fclose(f); 
+
+	perror("** wrote to .directories in cs1550_write **");
+
+	return size;
 }
 
 /* 
  * Read size bytes from file into buf starting from offset
  *
  */
-static int cs1550_read(const char *path, char *buf, size_t size, off_t offset,
-			  struct fuse_file_info *fi)
+static int cs1550_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
 	(void) buf;
 	(void) offset;
@@ -340,25 +487,14 @@ static int cs1550_read(const char *path, char *buf, size_t size, off_t offset,
 	return size;
 }
 
-/* 
- * Write size bytes from buf into file starting from offset
- *
+/*
+ * Deletes a file
  */
-static int cs1550_write(const char *path, const char *buf, size_t size, 
-			  off_t offset, struct fuse_file_info *fi)
+static int cs1550_unlink(const char *path)
 {
-	(void) buf;
-	(void) offset;
-	(void) fi;
-	(void) path;
+    (void) path;
 
-	//check to make sure path exists
-	//check that size is > 0
-	//check that offset is <= to the file size
-	//write data
-	//set size (should be same as input) and return, or error
-
-	return size;
+    return 0;
 }
 
 /******************************************************************************
