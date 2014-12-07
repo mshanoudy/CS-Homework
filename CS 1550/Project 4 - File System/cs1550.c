@@ -238,9 +238,10 @@ static int cs1550_readdir(const char *path, void *buf, fuse_fill_dir_t filler, o
 			{
 				char fullFileName[MAX_FILENAME + MAX_EXTENSION + 4];
 				strcpy(fullFileName, currentDirectory.files[fileIndex].fname);
+				strcat(fullFileName, ".");
 				strcat(fullFileName, currentDirectory.files[fileIndex].fext);
 
-				filler(buf, fullFileName + 1, NULL, 0);	// +1 skips the leading '/' on the filenames
+				filler(buf, fullFileName, NULL, 0);	// +1 skips the leading '/' on the filenames
 			}
 		}
 		// Invalid directory path
@@ -434,7 +435,6 @@ static int cs1550_write(const char *path, const char *buf, size_t size, off_t of
 		perror("** nFiles is >= 0 in cs1550_write **");
 
 	// Set directory entry
-	
 	currentDirectory.nFiles = currentDirectory.nFiles + 1;
 	currentDirectory.files[0].fsize = size;
 	strcpy(currentDirectory.files[0].fname, filename);
@@ -471,18 +471,65 @@ static int cs1550_write(const char *path, const char *buf, size_t size, off_t of
  */
 static int cs1550_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-	(void) buf;
-	(void) offset;
-	(void) fi;
-	(void) path;
+	char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
+	int  pathElements = split_path(path, directory, filename, extension);
 
-	//check to make sure path exists
-	//check that size is > 0
-	//check that offset is <= to the file size
+	cs1550_directory_entry currentDirectory;
+	int directoryIndex = get_directory(directory, &currentDirectory);
+	int fileIndex 	   = get_file_index(filename, extension, currentDirectory);
+	
+	(void) fi; // Unused parameter
+
+	perror("** cs1550_read called **");
+
+	// Is this a valid path?
+	if (fileIndex == -1)
+	{
+		perror("** Invalid path in cs1550_read **");
+		return -1;
+	}
+	// Is the size > 0?
+	if (size <= 0)
+	{
+		perror("** Size not > 0 in cs1550_read **");
+		return -1;
+	}
+	// Is the offset <= size?
+	if (offset > size)
+	{
+		perror("** offset > size in cs1550_read **");
+		return -EFBIG;
+	}
+	// Is this path a directory?
+	if (pathElements < 3)
+	{
+		perror("** Path is a directory in cs1550_read ");
+		return -EISDIR;
+	}
+	
+	int fileOffset = 0;
+
+	// Read from .disk
+	FILE *file = fopen(".disk", "rb+");
+	if (file == NULL)
+	{
+		perror("** fopen failed in cs1550_read **");
+		return -EIO;
+	}
+	if (fseek(file, fileOffset, SEEK_SET) != 0)
+	{
+		perror("** fseek failed in cs1550_read");
+		return -EIO;
+	}
+	if (fread(buf, size, 1, file) != 1)
+	{
+		perror("** fread failed in cs1550_read **");
+		return -EIO;
+	}
+	fclose(file);
+
 	//read in data
 	//set size and return, or error
-
-	size = 0;
 
 	return size;
 }
@@ -492,7 +539,55 @@ static int cs1550_read(const char *path, char *buf, size_t size, off_t offset, s
  */
 static int cs1550_unlink(const char *path)
 {
-    (void) path;
+	char directory[MAX_FILENAME + 1], filename[MAX_FILENAME + 1], extension[MAX_EXTENSION + 1];
+	int  pathElements = split_path(path, directory, filename, extension);
+
+	cs1550_directory_entry currentDirectory;
+	int directoryIndex = get_directory(directory, &currentDirectory);
+	int fileIndex 	   = get_file_index(filename, extension, currentDirectory);
+
+	// Is the path a directory?
+	if (pathElements < 3)
+	{
+		perror("** path is a directory in cs1550_unlink");
+		return -EISDIR;
+	}    
+	// Is this a valid file?
+	if (fileIndex == -1)
+	{
+		perror("** file not found in cs1550_unlink");
+		return -ENOENT;
+	}
+
+	int directoryOffset = directoryIndex * sizeof(cs1550_directory_entry);
+	int fileOffset 		= currentDirectory.files[fileIndex].nStartBlock;
+
+	// TODO: Mark block on .disk as empty
+
+	// Update the directory_entry
+	currentDirectory.nFiles = currentDirectory.nFiles - 1;
+	strcpy(currentDirectory.files[fileIndex].fname, "");
+	strcpy(currentDirectory.files[fileIndex].fext, "");
+	currentDirectory.files[fileIndex].fsize = 0;
+
+	// Write to .directories
+	FILE *file = fopen(".directories", "rb+");
+	if (file == NULL) 
+	{
+		perror("** fopen failed in cs1550_unlink **");
+		return -EIO;
+	}	
+	if (fseek(file, directoryOffset, SEEK_SET) != 0)
+	{
+		perror("** fseek failed in cs1550_unlink **");
+		return -EIO;
+	}
+	if (fwrite(&currentDirectory, sizeof(cs1550_directory_entry), 1, file) != 1)
+	{
+		perror("** fwrite failed in cs1550_unlink **");
+		return -EIO;
+	}
+	fclose(file);
 
     return 0;
 }
